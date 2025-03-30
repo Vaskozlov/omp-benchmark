@@ -11,3 +11,7 @@ find_package(TBB REQUIRED)
 
 add_executable(${PROJECT_NAME} main.cpp)
 target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX fmt::fmt benchmark::benchmark TBB::tbb)
+
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)")
+    target_compile_options(${PROJECT_NAME} PRIVATE "-mavx2")
+endif()
