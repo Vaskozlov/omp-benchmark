@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <benchmark/benchmark.h>
+#include <cstddef>
 #include <cstdio>
 #include <execution>
 #include <fmt/format.h>
@@ -68,7 +69,7 @@ auto ompWrongParallelMax(const std::vector<float> &vec) -> decltype(vec.begin())
         }
     }
 
-    return vec.begin() + idx;
+    return vec.begin() + static_cast<std::ptrdiff_t>(idx);
 }
 
 auto ompParallelMax(const std::vector<float> &vec) -> decltype(vec.begin())
@@ -96,7 +97,7 @@ auto ompParallelMax(const std::vector<float> &vec) -> decltype(vec.begin())
         }
     }
 
-    return vec.begin() + idx;
+    return vec.begin() + static_cast<std::ptrdiff_t>(idx);
 }
 
 #ifdef __x86_64__
@@ -219,12 +220,12 @@ auto trivialMax(const std::vector<float> &vec) -> decltype(vec.begin())
         }
     }
 
-    return vec.begin() + idx;
+    return vec.begin() + static_cast<std::ptrdiff_t>(idx);
 }
 
 auto standartMax(const std::vector<float> &vec) -> decltype(vec.begin())
 {
-    return std::max_element(vec.begin(), vec.end());
+    return std::ranges::max_element(vec);
 }
 
 #if !defined(_LIBCPP_VERSION)
