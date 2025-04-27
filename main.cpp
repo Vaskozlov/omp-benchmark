@@ -52,7 +52,7 @@ std::vector<float> generateRandomVectorOfFloatsNormalDistribution(
   return result;
 }
 
-static constexpr std::size_t dataSize = 10'000'000;
+static constexpr std::size_t dataSize = 100'000'000;
 
 const auto randomData = generateRandomVectorOfFloats(dataSize, -1000.0F, 1000.0F);
 
@@ -363,10 +363,38 @@ auto accumulateAsyncMultithreading(const std::span<const float> vec) -> isl::Tas
   co_return result;
 }
 
+auto accumulateSimdAsync(std::span<const float> vec) -> isl::Task<float> {
+  std::vector<isl::AsyncTask<float>> tasks;
+  tasks.reserve(ThreadsCount);
+
+  const auto chunk_size = vec.size() / ThreadsCount;
+  std::ptrdiff_t begin{};
+  std::ptrdiff_t end{};
+
+  for (std::size_t i = 0; i < ThreadsCount; ++i) {
+    begin = static_cast<std::ptrdiff_t>(chunk_size * i);
+    end = static_cast<std::ptrdiff_t>(chunk_size * (i + 1));
+
+    tasks.emplace_back(
+      pool.async([](std::span<const float> vec)-> isl::Task<float> {
+        co_return accumulateCustomSimd(vec.data(), vec.size());
+      }(std::span(vec.data() + begin, vec.data() + end)))
+    );
+  }
+
+  float result = accumulateCustomSimd(vec.data() + end, vec.size() - end);;
+
+  for (auto&task: tasks) {
+    result += co_await task;
+  }
+
+  co_return result;
+}
+
 auto accumulateSimdMultithreading(std::span<const float> vec) -> float {
   float result = 0.0F;
 
-#pragma omp parallel default(none) shared(vec, result) num_threads(ThreadsCount)
+#pragma omp parallel default(none) shared(vec, result) num_threads(4)
   {
     float local_accumulator = 0.0;
 
@@ -573,9 +601,13 @@ static void B_accumulateOmpSimdMultithreading(benchmark::State&state) {
 }
 
 static void B_accumulateSimdMultithreading(benchmark::State&state) {
+  pool.startThreads(4);
   for (auto _: state) {
-    benchmark::DoNotOptimize(accumulateSimdMultithreading(std::span(data.data(), state.range(0))));
+    auto t = accumulateSimdAsync(std::span(data.data(), state.range(0)));
+    t.await();
+    benchmark::DoNotOptimize(t.get());
   }
+  pool.stopAllThreads();
 }
 
 static void B_accumulateStd(benchmark::State&state) {
@@ -622,11 +654,12 @@ static void B_forkAccumulate(benchmark::State&state) {
 // BENCHMARK(B_accumulateStd)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->Arg(10'000'000)->Unit(
 //   benchmark::kMicrosecond);
 //
-BENCHMARK(B_accumulateSimd)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->Arg(10'000'000)->Unit(
-  benchmark::kMicrosecond);
+BENCHMARK(B_accumulateSimd)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->Arg(10'000'000)->
+Arg(100'000'000)->Unit(
+      benchmark::kMicrosecond);
 
 BENCHMARK(B_accumulateSimdMultithreading)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->
-Arg(10'000'000)->Unit(
+Arg(10'000'000)->Arg(100'000'000)->Unit(
       benchmark::kMicrosecond);
 
 // BENCHMARK(B_accumulateStd)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->Arg(10'000'000)->Unit(
