@@ -20,7 +20,7 @@ CPMAddPackage(
 CPMAddPackage(
         NAME isl
         GITHUB_REPOSITORY Vaskozlov/ISL
-        GIT_TAG f9d13f7d63ac7160962746a17788a60d937f0517
+        GIT_TAG 38eb61255b467d095a9d3c7137f4dd5f6f6e8308
 )
 
 add_executable(${PROJECT_NAME} main.cpp)
