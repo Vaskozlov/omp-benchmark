@@ -13,8 +13,6 @@
 #include <vector>
 #include <unistd.h>
 #include <sys/mman.h>
-#include <isl/thread/async_task.hpp>
-#include <isl/thread/pool.hpp>
 
 #if defined(__x86_64__)
 #    include <immintrin.h>
@@ -24,7 +22,6 @@
 
 const static std::size_t ThreadsCount = std::thread::hardware_concurrency() / 2;
 
-static isl::thread::Pool pool{0};
 
 std::vector<float> generateRandomVectorOfFloats(
   const std::size_t n, const float lower_bound, const float upper_bound) {
@@ -325,9 +322,13 @@ auto accumulateOmpSimdMultithreading(std::span<const float> vec) -> float {
 float vadd2(int n, const float* a) {
   float result = 0.0F;
 
-#pragma omp teams distribute parallel for simd reduction(+ : result)
-  for (int i = 0; i < n; i++)
-    result += a[i];
+  #pragma omp target data map(to: a[0:n]) map(tofrom: result)
+  {
+      #pragma omp target teams distribute parallel for reduction(+:result)
+      for (int i = 0; i < n; i++) {
+          result += a[i];
+      }
+  }
 
   return result;
 }
@@ -343,62 +344,6 @@ auto accumulateOmpMultithreading(std::span<const float> vec) -> float {
   }
 
   return result;
-}
-
-auto accumulateAsyncMultithreading(const std::span<const float> vec) -> isl::Task<float> {
-  std::vector<isl::AsyncTask<float>> tasks;
-  tasks.reserve(ThreadsCount);
-
-  const auto chunk_size = vec.size() / ThreadsCount;
-  std::ptrdiff_t begin{};
-  std::ptrdiff_t end{};
-
-  for (std::size_t i = 0; i < ThreadsCount; ++i) {
-    begin = static_cast<std::ptrdiff_t>(chunk_size * (i - 1));
-    end = static_cast<std::ptrdiff_t>(chunk_size * i);
-
-    tasks.emplace_back(
-      pool.async([](std::span<const float> vec)-> isl::Task<float> {
-        co_return std::accumulate(vec.begin(), vec.end(), 0.0F);
-      }(std::span(vec.data() + begin, vec.data() + end)))
-    );
-  }
-
-  float result = 0.0F;
-
-  for (auto&task: tasks) {
-    result += co_await task;
-  }
-
-  co_return result;
-}
-
-auto accumulateSimdAsync(std::span<const float> vec) -> isl::Task<float> {
-  std::vector<isl::AsyncTask<float>> tasks;
-  tasks.reserve(ThreadsCount);
-
-  const auto chunk_size = vec.size() / ThreadsCount;
-  std::ptrdiff_t begin{};
-  std::ptrdiff_t end{};
-
-  for (std::size_t i = 0; i < ThreadsCount; ++i) {
-    begin = static_cast<std::ptrdiff_t>(chunk_size * i);
-    end = static_cast<std::ptrdiff_t>(chunk_size * (i + 1));
-
-    tasks.emplace_back(
-      pool.async([](std::span<const float> vec)-> isl::Task<float> {
-        co_return accumulateCustomSimd(vec.data(), vec.size());
-      }(std::span(vec.data() + begin, vec.data() + end)))
-    );
-  }
-
-  float result = accumulateCustomSimd(vec.data() + end, vec.size() - end);;
-
-  for (auto&task: tasks) {
-    result += co_await task;
-  }
-
-  co_return result;
 }
 
 auto accumulateSimdMultithreading(std::span<const float> vec) -> float {
@@ -596,26 +541,10 @@ static void B_accumulateOmpMultithreading(benchmark::State&state) {
   }
 }
 
-static void B_accumulateAsyncMultithreading(benchmark::State&state) {
-  for (auto _: state) {
-    auto task = accumulateAsyncMultithreading(std::span(data.data(), state.range(0)));
-    task.await();
-    benchmark::DoNotOptimize(task.get());
-  }
-}
-
 static void B_accumulateOmpSimdMultithreading(benchmark::State&state) {
   for (auto _: state) {
     benchmark::DoNotOptimize(accumulateOmpSimdMultithreading(std::span(data.data(), state.range(0))));
   }
-}
-
-static void B_accumulateSimdMultithreading(benchmark::State&state) {
-  pool.startThreads(4);
-  for (auto _: state) {
-    benchmark::DoNotOptimize(accumulateSimdMultithreading(std::span(data.data(), state.range(0))));
-  }
-  pool.stopAllThreads();
 }
 
 static void B_accumulateStd(benchmark::State&state) {
