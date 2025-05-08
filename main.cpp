@@ -109,41 +109,41 @@ auto ompParallelMax(std::span<const float> vec) -> decltype(vec.begin()) {
 #ifdef __x86_64__
 auto simdMax(const float *data, std::size_t n) -> const float *
 {
-    __m256 maxVector = _mm256_set1_ps(-std::numeric_limits<float>::infinity());
-    std::size_t dataOffset = 0;
-    std::size_t maxValueIdx = 0;
+    __m256 max_value_vector = _mm256_set1_ps(-std::numeric_limits<float>::infinity());
+    std::size_t offset = 0;
+    std::size_t max_value_index = 0;
 
-    for (std::size_t i = 0; i < n / 8; ++i, dataOffset += 8) {
-        __m256 localData = _mm256_loadu_ps(data + dataOffset);
-        int mask = _mm256_movemask_ps(_mm256_cmp_ps(localData, maxVector, _CMP_GT_OQ));
+    for (std::size_t i = 0; i < n / 8; ++i, offset += 8) {
+        __m256 current_data = _mm256_loadu_ps(data + offset);
+        int mask = _mm256_movemask_ps(_mm256_cmp_ps(current_data, max_value_vector, _CMP_GT_OQ));
 
         if (mask == 0) {
             continue;
         }
 
-        auto maxValue = _mm_cvtss_f32(_mm256_castps256_ps128(maxVector));
+        auto max_value = _mm_cvtss_f32(_mm256_castps256_ps128(max_value_vector));
 
         for (std::size_t j = 0; j < 8; ++j) {
-            if (data[dataOffset + j] > maxValue) {
-                maxValue = data[dataOffset + j];
-                maxValueIdx = dataOffset + j;
+            if (data[offset + j] > max_value) {
+                max_value = data[offset + j];
+                max_value_index = offset + j;
             }
         }
 
-        maxVector = _mm256_set1_ps(maxValue);
+        max_value_vector = _mm256_set1_ps(max_value);
     }
 
-    auto maxValue = _mm_cvtss_f32(_mm256_castps256_ps128(maxVector));
+    auto max_value = _mm_cvtss_f32(_mm256_castps256_ps128(max_value_vector));
 
-    while (dataOffset < n) {
-        if (data[dataOffset] > maxValue) {
-            maxValue = data[dataOffset];
-            maxValueIdx = dataOffset;
+    while (offset < n) {
+        if (data[offset] > max_value) {
+            max_value = data[offset];
+            max_value_index = offset;
         }
-        ++dataOffset;
+        ++offset;
     }
 
-    return data + maxValueIdx;
+    return data + max_value_index;
 }
 #else
 
@@ -155,8 +155,8 @@ auto simdMax(const float* data, const std::size_t n) -> const float* {
   for (std::size_t i = 0; i < n / 4; ++i, data_offset += 4) {
     float32x4_t v = vld1q_f32(data + data_offset);
 
-    auto cmp_result = vcgtq_f32(v, max);
-    auto max_cmp = vmaxvq_u32(cmp_result);
+    const auto cmp_result = vcgtq_f32(v, max);
+    const auto max_cmp = vmaxvq_u32(cmp_result);
 
     if (max_cmp == 0) {
       continue;
@@ -318,6 +318,16 @@ auto accumulateOmpSimdMultithreading(std::span<const float> vec) -> float {
       result += vec[i];
     }
   }
+
+  return result;
+}
+
+float vadd2(int n, const float* a) {
+  float result = 0.0F;
+
+#pragma omp teams distribute parallel for simd reduction(+ : result)
+  for (int i = 0; i < n; i++)
+    result += a[i];
 
   return result;
 }
@@ -603,9 +613,7 @@ static void B_accumulateOmpSimdMultithreading(benchmark::State&state) {
 static void B_accumulateSimdMultithreading(benchmark::State&state) {
   pool.startThreads(4);
   for (auto _: state) {
-    auto t = accumulateSimdAsync(std::span(data.data(), state.range(0)));
-    t.await();
-    benchmark::DoNotOptimize(t.get());
+    benchmark::DoNotOptimize(accumulateSimdMultithreading(std::span(data.data(), state.range(0))));
   }
   pool.stopAllThreads();
 }
@@ -613,6 +621,12 @@ static void B_accumulateSimdMultithreading(benchmark::State&state) {
 static void B_accumulateStd(benchmark::State&state) {
   for (auto _: state) {
     benchmark::DoNotOptimize(std::accumulate(data.begin(), data.begin() + state.range(0), 0.0F));
+  }
+}
+
+static void B_accumulateExp(benchmark::State&state) {
+  for (auto _: state) {
+    benchmark::DoNotOptimize(vadd2(state.range(0), data.data()));
   }
 }
 
@@ -628,66 +642,82 @@ static void B_forkAccumulate(benchmark::State&state) {
   }
 }
 
+// BENCHMARK(B_accumulateStd)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->
+// Arg(10'000'000)->Arg(100'000'000)->Unit(
+//       benchmark::kMicrosecond);
 
-// BENCHMARK(B_ompParallelMaxSimd);
-// BENCHMARK(B_ompWrongParallelMax);
-// BENCHMARK(B_trivialMax);
-// BENCHMARK(B_ompParallelMax);
-// BENCHMARK(B_trivialMaxSimd);
-// BENCHMARK(B_standardMax);
-// BENCHMARK(B_forkMax);
+// BENCHMARK(B_accumulateOmpMultithreading)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->
+// Arg(10'000'000)->Arg(100'000'000)->Unit(
+//       benchmark::kMicrosecond);
 //
-// #if !defined(_LIBCPP_VERSION)
-// BENCHMARK(B_standardMaxParallel);
-// #endif
+// BENCHMARK(B_accumulateSimd)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->
+// Arg(10'000'000)->Arg(100'000'000)->Unit(
+//       benchmark::kMicrosecond);
+
+// BENCHMARK(B_forkAccumulate)
+//     ->Arg(100)
+//     ->Arg(1000)
+//     ->Arg(10'000)
+//     ->Arg(100'000)
+//     ->Arg(1'000'000)
+//     ->Arg(10'000'000)
+//     ->Arg(100'000'000)
+//     ->Unit(benchmark::kMicrosecond)
+//     ->Iterations(100);
 //
-// BENCHMARK(B_accumulateOmpSimd)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->Arg(10'000'000)->Unit(
-//   benchmark::kMicrosecond);
-// BENCHMARK(B_accumulateStd)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->Arg(10'000'000)->Unit(
-//   benchmark::kMicrosecond);
-// BENCHMARK(B_accumulateSimd)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->Arg(10'000'000)->Unit(
-// benchmark::kMicrosecond);
-// BENCHMARK(B_accumulateOmpSimdMultithreading);
-// BENCHMARK(B_accumulateSimdMultithreading);
-// BENCHMARK(B_forkAccumulate)->Arg(100'000)->Arg(1'000'000)->Arg(10'000'000)->Iterations(300);
+// BENCHMARK(B_accumulateSimdMultithreading)
+//     ->Arg(100)
+//     ->Arg(1000)
+//     ->Arg(10'000)
+//     ->Arg(100'000)
+//     ->Arg(1'000'000)
+//     ->Arg(10'000'000)
+//     ->Arg(100'000'000)
+//     ->Unit(benchmark::kMicrosecond);
 
-// BENCHMARK(B_accumulateStd)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->Arg(10'000'000)->Unit(
-//   benchmark::kMicrosecond);
+BENCHMARK(B_accumulateOmpSimdMultithreading)
+    ->Arg(100)
+    ->Arg(1000)
+    ->Arg(10'000)
+    ->Arg(100'000)
+    ->Arg(1'000'000)
+    ->Arg(10'000'000)
+    ->Arg(100'000'000)
+    ->Unit(benchmark::kMicrosecond);
+
+BENCHMARK(B_accumulateExp)
+    ->Arg(100)
+    ->Arg(1000)
+    ->Arg(10'000)
+    ->Arg(100'000)
+    ->Arg(1'000'000)
+    ->Arg(10'000'000)
+    ->Arg(100'000'000)
+    ->Unit(benchmark::kMicrosecond);
+
+
+// BENCHMARK(B_standardMax)
+//     ->Arg(100)
+//     ->Arg(1000)
+//     ->Arg(10'000)
+//     ->Arg(100'000)
+//     ->Arg(1'000'000)
+//     ->Arg(10'000'000)
+//     ->Arg(100'000'000)
+//     ->Unit(benchmark::kMicrosecond);
 //
-BENCHMARK(B_accumulateSimd)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->Arg(10'000'000)->
-Arg(100'000'000)->Unit(
-      benchmark::kMicrosecond);
+// BENCHMARK(B_trivialMaxSimd)
+//     ->Arg(100)
+//     ->Arg(1000)
+//     ->Arg(10'000)
+//     ->Arg(100'000)
+//     ->Arg(1'000'000)
+//     ->Arg(10'000'000)
+//     ->Arg(100'000'000)
+//     ->Unit(benchmark::kMicrosecond);
 
-BENCHMARK(B_accumulateSimdMultithreading)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->
-Arg(10'000'000)->Arg(100'000'000)->Unit(
-      benchmark::kMicrosecond);
-
-// BENCHMARK(B_accumulateStd)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->Arg(10'000'000)->Unit(
-//   benchmark::kMicrosecond);
-
-
-// BENCHMARK(B_accumulateAsyncMultithreading)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->
-// Arg(10'000'000)->Unit(benchmark::kMicrosecond);
-
-// BENCHMARK(B_ompParallelMax)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->
-// Arg(10'000'000)->Unit(benchmark::kMicrosecond);
-//
-// BENCHMARK(B_trivialMaxSimd)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->
-// Arg(10'000'000)->Unit(benchmark::kMicrosecond);
-//
-// BENCHMARK(B_standardMax)->Arg(100)->Arg(1000)->Arg(10'000)->Arg(100'000)->Arg(1'000'000)->
-// Arg(10'000'000)->Unit(benchmark::kMicrosecond);
 
 BENCHMARK_MAIN();
-
-/*
-B_forkAccumulate/100/iterations:300          570564 ns       530353 ns          300
-B_forkAccumulate/1000/iterations:300         588273 ns       526037 ns          300
-B_forkAccumulate/10000/iterations:300        609384 ns       544510 ns          300
-B_forkAccumulate/100000/iterations:300       637941 ns       592270 ns          300
-B_forkAccumulate/1000000/iterations:300      857817 ns       796100 ns          300
-B_forkAccumulate/10000000/iterations:300    3124520 ns      2989200 ns          300
-*/
 
 // int main() {
 //   fmt::println("{}", *standardMax(data));
