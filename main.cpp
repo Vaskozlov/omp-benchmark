@@ -15,21 +15,22 @@
 #include <sys/mman.h>
 
 #if defined(__x86_64__)
-#    include <immintrin.h>
+#include <immintrin.h>
 #else
-#    include <arm_neon.h>
+#include <arm_neon.h>
 #endif
 
 const static std::size_t ThreadsCount = std::thread::hardware_concurrency() / 2;
 
-
 std::vector<float> generateRandomVectorOfFloats(
-  const std::size_t n, const float lower_bound, const float upper_bound) {
+    const std::size_t n, const float lower_bound, const float upper_bound)
+{
   std::vector<float> result(n);
   std::mt19937_64 engine;
   std::uniform_real_distribution<float> distribution{lower_bound, upper_bound};
 
-  for (auto&elem: result) {
+  for (auto &elem : result)
+  {
     elem = distribution(engine);
   }
 
@@ -37,12 +38,14 @@ std::vector<float> generateRandomVectorOfFloats(
 }
 
 std::vector<float> generateRandomVectorOfFloatsNormalDistribution(
-  const std::size_t n, const float mean, const float der) {
+    const std::size_t n, const float mean, const float der)
+{
   std::vector<float> result(n);
   std::mt19937_64 engine;
   std::normal_distribution<float> distribution{mean, der};
 
-  for (auto&elem: result) {
+  for (auto &elem : result)
+  {
     elem = distribution(engine);
   }
 
@@ -56,17 +59,20 @@ const auto randomData = generateRandomVectorOfFloats(dataSize, -1000.0F, 1000.0F
 const auto randomNormalData =
     generateRandomVectorOfFloatsNormalDistribution(dataSize, 0.0F, 1000.0F);
 
-const auto&data = randomNormalData;
+const auto &data = randomNormalData;
 
-auto ompWrongParallelMax(std::span<const float> vec) -> decltype(vec.begin()) {
+auto ompWrongParallelMax(std::span<const float> vec) -> decltype(vec.begin())
+{
   std::size_t idx = 0;
 
   float maxValue = -std::numeric_limits<float>::infinity();
   const auto end = static_cast<std::intptr_t>(vec.size());
 
 #pragma omp parallel for
-  for (std::intptr_t i = 0; i < end; ++i) {
-    if (maxValue < vec[i]) {
+  for (std::intptr_t i = 0; i < end; ++i)
+  {
+    if (maxValue < vec[i])
+    {
       maxValue = vec[i];
       idx = i;
     }
@@ -75,7 +81,8 @@ auto ompWrongParallelMax(std::span<const float> vec) -> decltype(vec.begin()) {
   return vec.begin() + static_cast<std::ptrdiff_t>(idx);
 }
 
-auto ompParallelMax(std::span<const float> vec) -> decltype(vec.begin()) {
+auto ompParallelMax(std::span<const float> vec) -> decltype(vec.begin())
+{
   float maxValue = -std::numeric_limits<float>::infinity();
   std::size_t idx = 0;
 
@@ -86,15 +93,18 @@ auto ompParallelMax(std::span<const float> vec) -> decltype(vec.begin()) {
     const auto end = static_cast<std::intptr_t>(vec.size());
 
 #pragma omp for nowait
-    for (std::intptr_t i = 0; i < end; ++i) {
-      if (localMax < vec[i]) {
+    for (std::intptr_t i = 0; i < end; ++i)
+    {
+      if (localMax < vec[i])
+      {
         localMax = vec[i];
         localIdx = i;
       }
     }
 
 #pragma omp critical
-    if (localMax > maxValue) {
+    if (localMax > maxValue)
+    {
       maxValue = localMax;
       idx = localIdx;
     }
@@ -106,63 +116,74 @@ auto ompParallelMax(std::span<const float> vec) -> decltype(vec.begin()) {
 #ifdef __x86_64__
 auto simdMax(const float *data, std::size_t n) -> const float *
 {
-    __m256 max_value_vector = _mm256_set1_ps(-std::numeric_limits<float>::infinity());
-    std::size_t offset = 0;
-    std::size_t max_value_index = 0;
+  __m256 max_value_vector = _mm256_set1_ps(-std::numeric_limits<float>::infinity());
+  std::size_t offset = 0;
+  std::size_t max_value_index = 0;
 
-    for (std::size_t i = 0; i < n / 8; ++i, offset += 8) {
-        __m256 current_data = _mm256_loadu_ps(data + offset);
-        int mask = _mm256_movemask_ps(_mm256_cmp_ps(current_data, max_value_vector, _CMP_GT_OQ));
+  for (std::size_t i = 0; i < n / 8; ++i, offset += 8)
+  {
+    __m256 current_data = _mm256_loadu_ps(data + offset);
+    int mask = _mm256_movemask_ps(_mm256_cmp_ps(current_data, max_value_vector, _CMP_GT_OQ));
 
-        if (mask == 0) {
-            continue;
-        }
-
-        auto max_value = _mm_cvtss_f32(_mm256_castps256_ps128(max_value_vector));
-
-        for (std::size_t j = 0; j < 8; ++j) {
-            if (data[offset + j] > max_value) {
-                max_value = data[offset + j];
-                max_value_index = offset + j;
-            }
-        }
-
-        max_value_vector = _mm256_set1_ps(max_value);
+    if (mask == 0)
+    {
+      continue;
     }
 
     auto max_value = _mm_cvtss_f32(_mm256_castps256_ps128(max_value_vector));
 
-    while (offset < n) {
-        if (data[offset] > max_value) {
-            max_value = data[offset];
-            max_value_index = offset;
-        }
-        ++offset;
+    for (std::size_t j = 0; j < 8; ++j)
+    {
+      if (data[offset + j] > max_value)
+      {
+        max_value = data[offset + j];
+        max_value_index = offset + j;
+      }
     }
 
-    return data + max_value_index;
+    max_value_vector = _mm256_set1_ps(max_value);
+  }
+
+  auto max_value = _mm_cvtss_f32(_mm256_castps256_ps128(max_value_vector));
+
+  while (offset < n)
+  {
+    if (data[offset] > max_value)
+    {
+      max_value = data[offset];
+      max_value_index = offset;
+    }
+    ++offset;
+  }
+
+  return data + max_value_index;
 }
 #else
 
-auto simdMax(const float* data, const std::size_t n) -> const float* {
+auto simdMax(const float *data, const std::size_t n) -> const float *
+{
   std::size_t data_offset = 0;
   std::size_t max_elem_index = 0;
   float32x4_t max = vdupq_n_f32(-std::numeric_limits<float>::infinity());
 
-  for (std::size_t i = 0; i < n / 4; ++i, data_offset += 4) {
+  for (std::size_t i = 0; i < n / 4; ++i, data_offset += 4)
+  {
     float32x4_t v = vld1q_f32(data + data_offset);
 
     const auto cmp_result = vcgtq_f32(v, max);
     const auto max_cmp = vmaxvq_u32(cmp_result);
 
-    if (max_cmp == 0) {
+    if (max_cmp == 0)
+    {
       continue;
     }
 
     float max_elem = vgetq_lane_f32(max, 0);
 
-    for (std::size_t j = 0; j < 4; ++j) {
-      if (data[data_offset + j] > max_elem) {
+    for (std::size_t j = 0; j < 4; ++j)
+    {
+      if (data[data_offset + j] > max_elem)
+      {
         max_elem = data[data_offset + j];
         max_elem_index = data_offset + j;
       }
@@ -173,8 +194,10 @@ auto simdMax(const float* data, const std::size_t n) -> const float* {
 
   float max_elem = vgetq_lane_f32(max, 0);
 
-  while (data_offset < n) {
-    if (data[data_offset] > max_elem) {
+  while (data_offset < n)
+  {
+    if (data[data_offset] > max_elem)
+    {
       max_elem_index = data_offset;
       max_elem = data[max_elem_index];
     }
@@ -185,8 +208,9 @@ auto simdMax(const float* data, const std::size_t n) -> const float* {
 }
 #endif
 
-auto ompParallelMaxWithSimd(std::span<const float> vec) -> const float* {
-  const auto* it = vec.data();
+auto ompParallelMaxWithSimd(std::span<const float> vec) -> const float *
+{
+  const auto *it = vec.data();
 
 #pragma omp parallel default(none) shared(vec, it) num_threads(ThreadsCount)
   {
@@ -201,7 +225,8 @@ auto ompParallelMaxWithSimd(std::span<const float> vec) -> const float* {
     auto local_max = simdMax(vec.data() + start, end - start);
 
 #pragma omp critical
-    if (*local_max > *it) {
+    if (*local_max > *it)
+    {
       it = local_max;
     }
   }
@@ -209,12 +234,15 @@ auto ompParallelMaxWithSimd(std::span<const float> vec) -> const float* {
   return it;
 }
 
-auto trivialMax(std::span<const float> vec) -> decltype(vec.begin()) {
+auto trivialMax(std::span<const float> vec) -> decltype(vec.begin())
+{
   float maxValue = -std::numeric_limits<float>::infinity();
   std::size_t idx = 0;
 
-  for (std::size_t i = 0; i < randomData.size(); ++i) {
-    if (maxValue < randomData[i]) {
+  for (std::size_t i = 0; i < randomData.size(); ++i)
+  {
+    if (maxValue < randomData[i])
+    {
       idx = i;
       maxValue = randomData[i];
     }
@@ -223,22 +251,25 @@ auto trivialMax(std::span<const float> vec) -> decltype(vec.begin()) {
   return vec.begin() + static_cast<std::ptrdiff_t>(idx);
 }
 
-auto standardMax(std::span<const float> vec) -> decltype(vec.begin()) {
+auto standardMax(std::span<const float> vec) -> decltype(vec.begin())
+{
   return std::ranges::max_element(vec);
 }
 
 #if !defined(_LIBCPP_VERSION)
 auto standardMaxParallel(std::span<const float> vec) -> decltype(vec.begin())
 {
-    return std::max_element(std::execution::par, vec.begin(), vec.end());
+  return std::max_element(std::execution::par, vec.begin(), vec.end());
 }
 #endif
 
-auto accumulateOmpSimd(std::span<const float> vec) -> float {
+auto accumulateOmpSimd(std::span<const float> vec) -> float
+{
   float result = 0.0F;
 
 #pragma omp simd reduction(+ : result)
-  for (std::size_t i = 0; i < vec.size(); ++i) {
+  for (std::size_t i = 0; i < vec.size(); ++i)
+  {
     result += vec[i];
   }
 
@@ -248,46 +279,53 @@ auto accumulateOmpSimd(std::span<const float> vec) -> float {
 #if defined(__x86_64__)
 auto accumulateCustomSimd(const float *data, const std::size_t n) -> float
 {
-    if (n < 8) {
-        return std::accumulate(data, data + n, 0.0F);
-    }
+  if (n < 8)
+  {
+    return std::accumulate(data, data + n, 0.0F);
+  }
 
-    __m256 accumulator = _mm256_loadu_ps(data);
-    std::size_t data_offset = 8;
+  __m256 accumulator = _mm256_loadu_ps(data);
+  std::size_t data_offset = 8;
 
-    for (std::size_t i = 1; i < n / 8; ++i, data_offset += 8) {
-        auto tmp = _mm256_loadu_ps(data + data_offset);
-        accumulator = _mm256_add_ps(accumulator, tmp);
-    }
+  for (std::size_t i = 1; i < n / 8; ++i, data_offset += 8)
+  {
+    auto tmp = _mm256_loadu_ps(data + data_offset);
+    accumulator = _mm256_add_ps(accumulator, tmp);
+  }
 
-    accumulator = _mm256_hadd_ps(accumulator, accumulator);
-    accumulator = _mm256_hadd_ps(accumulator, accumulator);
+  accumulator = _mm256_hadd_ps(accumulator, accumulator);
+  accumulator = _mm256_hadd_ps(accumulator, accumulator);
 
-    auto sum_high = _mm256_extractf128_ps(accumulator, 1);
-    auto sum_low = _mm256_castps256_ps128(accumulator);
+  auto sum_high = _mm256_extractf128_ps(accumulator, 1);
+  auto sum_low = _mm256_castps256_ps128(accumulator);
 
-    float total_sum = _mm_cvtss_f32(sum_low) + _mm_cvtss_f32(sum_high);
+  float total_sum = _mm_cvtss_f32(sum_low) + _mm_cvtss_f32(sum_high);
 
-    while (data_offset < n) {
-        total_sum += data[data_offset];
-        ++data_offset;
-    }
+  while (data_offset < n)
+  {
+    total_sum += data[data_offset];
+    ++data_offset;
+  }
 
-    return total_sum;
+  return total_sum;
 }
 #else
-auto accumulateCustomSimd(const float* data, const std::size_t n) -> float {
-  if (n < 4) {
+auto accumulateCustomSimd(const float *data, const std::size_t n) -> float
+{
+  if (n < 4)
+  {
     return std::accumulate(data, data + n, 0.0F);
   }
 
   float32x4_t accumulator = vld1q_f32(data);
   std::size_t data_offset = 4;
 
-  for (std::size_t i = 1; i < n / 16; ++i, data_offset += 16) {
+  for (std::size_t i = 1; i < n / 16; ++i, data_offset += 16)
+  {
     float32x4_t tmp = vld1q_f32(data + data_offset);
 
-    for (std::size_t j = 1; j < 4; ++j) {
+    for (std::size_t j = 1; j < 4; ++j)
+    {
       tmp = vaddq_f32(tmp, vld1q_f32(data + data_offset + j * 4));
     }
 
@@ -297,7 +335,8 @@ auto accumulateCustomSimd(const float* data, const std::size_t n) -> float {
   const auto temp = vadd_f32(vget_high_f32(accumulator), vget_low_f32(accumulator));
   auto total_sum = vget_lane_f32(temp, 0) + vget_lane_f32(temp, 1);
 
-  while (data_offset < n) {
+  while (data_offset < n)
+  {
     total_sum += data[data_offset++];
   }
 
@@ -305,13 +344,15 @@ auto accumulateCustomSimd(const float* data, const std::size_t n) -> float {
 }
 #endif
 
-auto accumulateOmpSimdMultithreading(std::span<const float> vec) -> float {
+auto accumulateOmpSimdMultithreading(std::span<const float> vec) -> float
+{
   float result = 0.0F;
 
 #pragma omp parallel num_threads(ThreadsCount)
   {
 #pragma omp for simd reduction(+ : result) nowait
-    for (std::size_t i = 0; i < vec.size(); ++i) {
+    for (std::size_t i = 0; i < vec.size(); ++i)
+    {
       result += vec[i];
     }
   }
@@ -319,34 +360,39 @@ auto accumulateOmpSimdMultithreading(std::span<const float> vec) -> float {
   return result;
 }
 
-float vadd2(int n, const float* a) {
+float vadd2(int n, const float *a)
+{
   float result = 0.0F;
 
-  #pragma omp target data map(to: a[0:n]) map(tofrom: result)
+#pragma omp target data map(to : a[0 : n]) map(tofrom : result)
   {
-      #pragma omp target teams distribute parallel for reduction(+:result)
-      for (int i = 0; i < n; i++) {
-          result += a[i];
-      }
+#pragma omp target teams distribute parallel for reduction(+ : result)
+    for (int i = 0; i < n; i++)
+    {
+      result += a[i];
+    }
   }
 
   return result;
 }
 
-auto accumulateOmpMultithreading(std::span<const float> vec) -> float {
+auto accumulateOmpMultithreading(std::span<const float> vec) -> float
+{
   float result = 0.0F;
 
   const auto length = static_cast<std::intptr_t>(vec.size());
 
 #pragma omp parallel for num_threads(ThreadsCount) reduction(+ : result)
-  for (std::intptr_t i = 0; i < length; ++i) {
+  for (std::intptr_t i = 0; i < length; ++i)
+  {
     result += vec[i];
   }
 
   return result;
 }
 
-auto accumulateSimdMultithreading(std::span<const float> vec) -> float {
+auto accumulateSimdMultithreading(std::span<const float> vec) -> float
+{
   float result = 0.0F;
 
 #pragma omp parallel default(none) shared(vec, result) num_threads(4)
@@ -370,40 +416,46 @@ auto accumulateSimdMultithreading(std::span<const float> vec) -> float {
   return result;
 }
 
-template<typename T>
-struct SharedFrame {
+template <typename T>
+struct SharedFrame
+{
   std::atomic<std::size_t> indexGenerator{};
   std::atomic<std::size_t> completedTasksCount{};
   std::array<T, 128> result{};
 };
 
-float accumulateWithFork(std::span<const float> data, const std::size_t forks_count) {
+float accumulateWithFork(std::span<const float> data, const std::size_t forks_count)
+{
   constexpr static std::size_t frame_size = 0x1000;
 
-  void* shared_memory = mmap(nullptr, frame_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+  void *shared_memory = mmap(nullptr, frame_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
-  if (shared_memory == nullptr) {
+  if (shared_memory == nullptr)
+  {
     throw std::bad_alloc{};
   }
 
-  auto* shared_frame = new(shared_memory) SharedFrame<float>{};
+  auto *shared_frame = new (shared_memory) SharedFrame<float>{};
 
   const auto chunk_size = data.size() / forks_count;
   std::ptrdiff_t begin{};
   std::ptrdiff_t end{};
 
-  for (std::size_t i = 0; i < forks_count - 1; ++i) {
+  for (std::size_t i = 0; i < forks_count - 1; ++i)
+  {
     begin = static_cast<std::ptrdiff_t>(chunk_size * i);
     end = static_cast<std::ptrdiff_t>(chunk_size * (i + 1));
     const auto in_frame_index = shared_frame->indexGenerator.fetch_add(1);
 
     const pid_t pid = fork();
 
-    if (pid < 0) {
+    if (pid < 0)
+    {
       throw std::runtime_error{"fork failed"};
     }
 
-    if (pid == 0) {
+    if (pid == 0)
+    {
       // child
       shared_frame->result[in_frame_index] = std::accumulate(data.begin() + begin, data.begin() + end, 0.0F);
       shared_frame->completedTasksCount.fetch_add(1);
@@ -413,11 +465,13 @@ float accumulateWithFork(std::span<const float> data, const std::size_t forks_co
 
   auto result = std::accumulate(data.begin() + end, data.end(), 0.0F);
 
-  while (shared_frame->completedTasksCount.load() < forks_count - 1) {
+  while (shared_frame->completedTasksCount.load() < forks_count - 1)
+  {
     std::this_thread::yield();
   }
 
-  for (std::size_t i = 0; i < forks_count - 1; ++i) {
+  for (std::size_t i = 0; i < forks_count - 1; ++i)
+  {
     result += shared_frame->result[i];
   }
 
@@ -426,36 +480,40 @@ float accumulateWithFork(std::span<const float> data, const std::size_t forks_co
   return result;
 }
 
-auto forkMax(std::span<const float> data, const std::size_t forks_count) -> decltype(data.begin()) {
+auto forkMax(std::span<const float> data, const std::size_t forks_count) -> decltype(data.begin())
+{
   constexpr static std::size_t frame_size = 0x1000;
 
-  void* shared_memory = mmap(nullptr, frame_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+  void *shared_memory = mmap(nullptr, frame_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
-  if (shared_memory == nullptr) {
+  if (shared_memory == nullptr)
+  {
     throw std::bad_alloc{};
   }
 
-  auto* shared_frame = new(shared_memory) SharedFrame<std::ptrdiff_t>{};
+  auto *shared_frame = new (shared_memory) SharedFrame<std::ptrdiff_t>{};
 
   const auto chunk_size = data.size() / forks_count;
   std::ptrdiff_t start{};
   std::ptrdiff_t end{};
 
-  for (std::size_t i = 0; i < forks_count - 1; ++i) {
+  for (std::size_t i = 0; i < forks_count - 1; ++i)
+  {
     start = static_cast<std::ptrdiff_t>(chunk_size * i);
     end = static_cast<std::ptrdiff_t>(chunk_size * (i + 1));
     const auto result_index = shared_frame->indexGenerator.fetch_add(1);
 
     const pid_t pid = fork();
 
-    if (pid < 0) {
+    if (pid < 0)
+    {
       throw std::runtime_error{"fork failed"};
     }
 
-    if (pid == 0) {
+    if (pid == 0)
+    {
       // child
-      shared_frame->result[result_index] = std::max_element(data.begin() + start, data.begin() + end) - data.
-                                           begin();
+      shared_frame->result[result_index] = std::max_element(data.begin() + start, data.begin() + end) - data.begin();
       shared_frame->completedTasksCount.fetch_add(1);
       std::exit(EXIT_SUCCESS);
     }
@@ -463,12 +521,15 @@ auto forkMax(std::span<const float> data, const std::size_t forks_count) -> decl
 
   auto result = std::max_element(data.begin() + end, data.end());
 
-  while (shared_frame->completedTasksCount.load() < forks_count - 1) {
+  while (shared_frame->completedTasksCount.load() < forks_count - 1)
+  {
     std::this_thread::yield();
   }
 
-  for (std::size_t i = 0; i < forks_count - 1; ++i) {
-    if (const auto idx = shared_frame->result[i]; *(data.begin() + idx) > *result) {
+  for (std::size_t i = 0; i < forks_count - 1; ++i)
+  {
+    if (const auto idx = shared_frame->result[i]; *(data.begin() + idx) > *result)
+    {
       result = data.begin() + idx;
     }
   }
@@ -624,7 +685,6 @@ BENCHMARK(B_accumulateExp)
     ->Arg(100'000'000)
     ->Unit(benchmark::kMicrosecond);
 
-
 // BENCHMARK(B_standardMax)
 //     ->Arg(100)
 //     ->Arg(1000)
@@ -645,7 +705,6 @@ BENCHMARK(B_accumulateExp)
 //     ->Arg(100'000'000)
 //     ->Unit(benchmark::kMicrosecond);
 
-
 BENCHMARK_MAIN();
 
 // int main() {
@@ -664,5 +723,13 @@ BENCHMARK_MAIN();
 //   // fmt::println("{}", accumulateAsyncMultithreading(data));
 //   fmt::println("{}", accumulateWithFork(data, 4));
 //
+//   return 0;
+// }
+
+// int main() {
+//   auto result = vadd2(10000, randomData.data());
+
+//   std::printf("%f\n", result);
+
 //   return 0;
 // }
